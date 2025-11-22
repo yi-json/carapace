@@ -1,3 +1,29 @@
+# Carapace
+
+A lightweight container runtime written in Rust.
+
+## Getting Started
+
+### Prerequisites
+- Linux (or a Linux VM)
+- Rust (cargo)
+
+### Installation
+1. Clone the repository:
+    ```bash
+    git clone https://github.com/yi-json/carapace.git
+    cd carapace
+    ```
+2. Prepare the filesystem: This downloads the minimum Alpine Linux rootfs needed for the container
+    ```bash
+    ./setup.sh
+    ```
+3. Run a container:
+    ```bash
+    sudo cargo run -- run /bin/sh
+    ```
+    
+
 ## Documentation
 Documenting all of the steps I've done for my future self.
 
@@ -122,8 +148,15 @@ fn run(cmd: String, args: Vec<String>) {
 Right now, our container feels safe, but it has a massive security hole.
 
 When we run `ls /home/ubuntu`, we still see our project files and everything on our host machine
-    * We created "walls" for Process IDs and Hostnames, but we are still looking at the Host's Filesystem
-    * It's like locking a thief in a room (Namespace) but leaving the window open to the bank vault (file system)
+* We created "walls" for Process IDs and Hostnames, but we are still looking at the Host's Filesystem
+* It's like locking a thief in a room (Namespace) but leaving the window open to the bank vault (file system)
+
+To fix this, we'll use **Alpine Linux** to use as our "jail"
+
+When implmented, we have accomplished the following:
+* The **Kernel** is the Ubuntu Kernel from the VM
+* The **Userland** (files, shell, tools) is Alpine Linux
+* The **Process** is trapped in a jail (`chroot`) and a clean room (`namespaces`)
 
 ## Resources
 * [Introduction to containers](https://litchipi.github.io/2021/09/20/container-in-rust-part1.html)
