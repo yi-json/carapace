@@ -1,7 +1,7 @@
-### Documentation
+## Documentation
 Documenting all of the steps I've done for my future self.
 
-#### Phase 0: Setting up the Environment
+### Phase 0: Setting up the Environment
 Step 1: Get a Linux VM
 1. Install mutlipass via Homebrew: `brew install --cask multipass`
 2. Spin up your customized VM because we need a bit more CPU/RAM than the default for compiling Rust efficiently:
@@ -41,6 +41,42 @@ When you run git clone in a moment, this happens:
     Your VM (Client): "No problem. I have the Private Key." It solves the math problem locally and sends the answer back.
 GitHub: "The answer is correct. You are authenticated."
 
+### Phase 1: Skeleton Code
+1. The Interface ("Manager"; Can I talk to it?)
+    * Before worrying about Linux syscalls, I need a program that understands my commands
+    * I need it to distinguish between "Me (the user)" and "it (the internal user)"
+    * **Goal**: Make `cargo run --run /bin/sh` print a message
+```{rs}
+use clap::{Parser, Subcommand};
 
-### Resources
+#[derive(Parser)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    Run { cmd: String, args: Vec<String> }, // User types this
+    Child { cmd: String, args: Vec<String> } // Internal use only
+}
+
+fn main() {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Run {cmd, args} => {
+            println!("Parent: I need to start a container for '{}'", cmd);
+            // TODO: Create isolation here
+        }
+        Commands::Child {cmd, args} => {
+            println!("Child: I am inside the container running '{}'", cmd);
+            // TODO: Become the shell here
+        }
+    }
+}
+```
+
+
+## Resources
 * [Introduction to containers](https://litchipi.github.io/2021/09/20/container-in-rust-part1.html)
