@@ -46,7 +46,7 @@ GitHub: "The answer is correct. You are authenticated."
     * Before worrying about Linux syscalls, I need a program that understands my commands
     * I need it to distinguish between "Me (the user)" and "it (the internal user)"
     * **Goal**: Make `cargo run --run /bin/sh` print a message
-```{rs}
+```{rust}
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -77,6 +77,53 @@ fn main() {
 }
 ```
 
+2. The Architect (Building the Walls)
+    * Now that the interface works, we need the Parent to actually create the isolation. We do this by successfully launching a second process that is "disconnected" from the host
+    * **Goal**: When I run the code, I want to see the Parent print "Setting up..." and then the Child print "I am inside..."
+```{rust}
+use nix::sched::{unshare, CloneFlags};
+use std::process::{Command, Stdio};
+
+fn run(cmd: String, args: Vec<String>) {
+    println!("Parent: Setting up isolation...");
+
+    // 1. magic syscall: create new "rooms" for Hostname (UTS) and PIDs
+    unshare(CloneFlags::CLONE_NEWUTS | CloneFlags::CLONE_NEWPID).unwrap();
+
+    // 2. Re-Exec: spawn a copy of OURSELVES into those new rooms
+    // we call the hidden "child" command we defiend in step 1
+    let mut child = Command::new("/proc/self/exe")
+        .arg("child")
+        .arg(cmd)
+        .args(args)
+        .spawn()
+        .unwrap();
+
+    child.wait().unwrap(); // if a child prints "I am inside...", we know the process cloning worked
+}
+```
+
+3. The Tenant (Moving In)
+    * Now I am inside the container (the `child` block runs)
+    * I need to prove I'm isolated and then actually become the shell
+    * **Goal**: Change the hostname (proof) and swap a Rust process for a Shell process
+    * How to test: Build as User, Run as Root (compile the code as yourself), but execute the final binary as root
+        * `cargo build`
+        * `sudo ./target/debug/carapace run /bin/sh`
+    * Successful Check:
+        1. You will see your "Parent" and "Child" print statements.
+        2. You will be in a new shell prompt denoted as `#`
+            * This means you are running `bin/sh` as the root user inside your new isolated environment
+        3. Type hostname — it should say carapace-container.
+            * Proves the UTS Namespace worked
+            * We renamed the machine inside the container, but your actual VM is still called `rusty-box`
+        4. Type exit to leave.
+
+Right now, our container feels safe, but it has a massive security hole.
+
+When we run `ls /home/ubuntu`, we still see our project files and everything on our host machine
+    * We created "walls" for Process IDs and Hostnames, but we are still looking at the Host's Filesystem
+    * It's like locking a thief in a room (Namespace) but leaving the window open to the bank vault (file system)
 
 ## Resources
 * [Introduction to containers](https://litchipi.github.io/2021/09/20/container-in-rust-part1.html)
