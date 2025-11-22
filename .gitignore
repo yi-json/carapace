@@ -1,1 +1,8 @@
 /target
+
+# Ignore the Alpine filesystem (binary blob)
+/rootfs
+
+# Ignore lock files if you want (optional, but usually keep Cargo.lock)
+**/*.swp
+**/*.DS_Store

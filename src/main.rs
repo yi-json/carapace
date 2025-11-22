@@ -6,7 +6,7 @@ use nix::sched::{unshare, CloneFlags};
 use std::process::{Command};
 
 // change hostname (proof)
-use nix::unistd::{sethostname, execvp, getpid};
+use nix::unistd::{sethostname, execvp, getpid, chroot, chdir};
 use std::ffi::CString;
 
 #[derive(Parser)]
@@ -48,7 +48,16 @@ fn child(cmd: String, args: Vec<String>) {
     // since we unshared UTS, this is safe
     sethostname("carapace-container").unwrap();
 
-    // 2. The Handover: Delete this Rust program from memory and load /bin/sh
+    // 2. The Jail: Restrict Filesystem access to the `rootfs` folder
+    println!("Child: Entering chroot jail...");
+
+    // change root to 'rootfs' folder
+    chroot("rootfs").expect("Failed to chroot. Did you create the 'rootfs' folder?");
+
+    // security best practice: moving working dir to the new root ("/")
+    chdir("/").expect("Failed to chdir to /");
+
+    // 3. The Handover: Delete this Rust program from memory and load /bin/sh
     let c_cmd = CString::new(cmd.clone()).unwrap();
     let c_args: Vec<CString> = std::iter::once(cmd) // start with program name
         .chain(args.into_iter()) // add args
