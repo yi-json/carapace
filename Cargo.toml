@@ -1,0 +1,15 @@
+[package]
+name = "carapace"
+version = "0.1.0"
+edition = "2021"
+description = "A lightweight container runtime using Linux namespaces."
+
+[dependencies]
+# The "Systems" crate - gives us access to raw Linux syscalls
+nix = { version = "0.27", features = ["process", "sched", "mount", "user", "fs"] }
+
+# For parsing command line arguments (e.g., 'carapace run /bin/sh')
+clap = { version = "4.4", features = ["derive"] }
+
+# Better error handling
+anyhow = "1.0"
