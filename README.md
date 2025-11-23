@@ -213,6 +213,31 @@ BUG_REPORT_URL="https://gitlab.alpinelinux.org/alpine/aports/-/issues"
 / # 
 ```
 
+To achieve this, we modify the `child()` function to perform a "FileSystem Swap" before executing the user's command. 
+
+We use two specific system calls:
+    1. `chroot("rootfs")`: This changes the Root Directory for the current process. The Kernel now translates / to mean the ./rootfs folder we downloaded.
+    2. `chdir("/")`: This is a critical security step. Even after changing the root, the process might technically be "standing" in a directory outside the jail. Changing the directory to / ensures we are physically inside the new environment.
+
+```rust
+use nix::unistd::{chroot, chdir};
+
+fn child(cmd: String, args: Vec<String>) -> Result<()> {
+    // ... previous namespace code ...
+
+    println!("Child: Entering chroot jail...");
+    
+    // 1. The Lock: Restrict filesystem access to the 'rootfs' folder
+    chroot("rootfs")?; 
+    
+    // 2. The Entry: Move current working directory into the new root
+    chdir("/")?;
+
+    // ... proceed to execvp ...
+    Ok(()) // this is needed because of specified return type Result<()>
+}
+```
+
 ### Phase 3: Adding Control Groups (`Cgroups`)
 Now, we are moving from a "process isolation trick" to a real "container runtime"  that can enforce limits
     * This is similar to to the resource management Google cares about for Borg/Kubernetes
