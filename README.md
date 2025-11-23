@@ -9,7 +9,18 @@ A lightweight container runtime written in Rust.
 - Rust (cargo)
 
 ### Installation
-1. **Clone the repository:**
+0. **Setup**:
+    * If you're already using Linux, then feel free to skip (also you're a nerd).
+    * Otherwise, we have to create a Virtual Machine, here's how:
+        1. Install mutlipass, on brew it's `brew install --cask multipass`
+        2. Launch a Development VM - Run this in your terminal to create an Ubuntu 24.04 VM with enough RAM to compile Rust:
+            * `multipass launch --name rusty-box --cpus 4 --memory 4G --disk 20G 24.04`
+            * `multipass shell rusty-box`
+        3. Once inside the VM, run:
+            * `sudo apt update && sudo apt install -y build-essential`
+            * `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+            * `source "$HOME/.cargo/env"`
+1. **Clone the repository (inside your Linux environment):**
     ```bash
     git clone https://github.com/yi-json/carapace.git
     cd carapace
