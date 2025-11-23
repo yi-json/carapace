@@ -22,7 +22,7 @@ A lightweight container runtime written in Rust.
     ```bash
     sudo cargo run -- run /bin/sh
     ```
-    
+
 
 ## Documentation
 Documenting all of the steps I've done for my future self.
@@ -145,6 +145,7 @@ fn run(cmd: String, args: Vec<String>) {
             * We renamed the machine inside the container, but your actual VM is still called `rusty-box`
         4. Type exit to leave.
 
+### Phase 2: Improving the Security by Adding Jail
 Right now, our container feels safe, but it has a massive security hole.
 
 When we run `ls /home/ubuntu`, we still see our project files and everything on our host machine
@@ -157,6 +158,199 @@ When implmented, we have accomplished the following:
 * The **Kernel** is the Ubuntu Kernel from the VM
 * The **Userland** (files, shell, tools) is Alpine Linux
 * The **Process** is trapped in a jail (`chroot`) and a clean room (`namespaces`)
+
+Example usage:
+```bash
+ubuntu@rusty-box:~/github/carapace$ sudo ./target/debug/carapace run /bin/sh
+Parent: I need to start a container for '/bin/sh'
+Parent: Setting up isolation...
+Child: I am inside the container running '/bin/sh'
+Child (PID: 1): Configuring container...
+Child: Entering chroot jail...
+/ # ls
+bin     dev     etc     home    lib     media   mnt     opt     proc    root    rootfs  run     sbin    srv     sys     tmp     usr     var
+/ # ls /home
+/ # cat /etc/os-release
+NAME="Alpine Linux"
+ID=alpine
+VERSION_ID=3.18.4
+PRETTY_NAME="Alpine Linux v3.18"
+HOME_URL="https://alpinelinux.org/"
+BUG_REPORT_URL="https://gitlab.alpinelinux.org/alpine/aports/-/issues"
+/ # 
+```
+
+### Phase 3: Adding Control Groups (`Cgroups`)
+Now, we are moving from a "process isolation trick" to a real "container runtime"  that can enforce limits
+    * This is similar to to the resource management Google cares about for Borg/Kubernetes
+1. Cgroup Logic
+    * We add `setup_cgroups()` to set up the Cgroup hierarchy and limits
+    * We add `clean_cgroups()` to clean the Cgroup directory after we are done
+2. Update Run Logic
+    * We need to turn on the Cgroup on **before** we start the container, and turn if off **after** the container dies
+
+#### Comparing `run()` before and after:
+**Before (Prototype)**:
+```rust
+fn run(cmd: String, args: Vec<String>) {
+    println!("Parent: Setting up isolation...");
+
+    // 1. magic syscall: create new "rooms" for Hostname (UTS) and PIDs
+    unshare(CloneFlags::CLONE_NEWUTS | CloneFlags::CLONE_NEWPID).unwrap();
+
+    // 2. Re-Exec: spawn a copy of OURSELVES into those new rooms
+    // we call the hidden "child" command we defiend in step 1
+    let mut child = Command::new("/proc/self/exe")
+        .arg("child")
+        .arg(cmd)
+        .args(args)
+        .spawn()
+        .unwrap();
+    child.wait().unwrap(); // if a child prints "I am inside...", we know the process cloning worked
+}
+```
+
+**After (Production Ready)**:
+```rust
+fn run(cmd: String, args: Vec<String>) -> Result<()> {
+    // setup cgroups (limit resources)
+    setup_cgroups()?;
+
+    println!("Parent (PID: {}): Setting up isolation...", getpid());
+
+    // unshare namespaces (UTS, PID, and Mount)
+    let flags = CloneFlags::CLONE_NEWUTS 
+              | CloneFlags::CLONE_NEWPID 
+              | CloneFlags::CLONE_NEWNS;
+    unshare(flags)?;
+
+    // 2. Re-Exec: spawn a copy of OURSELVES into those new rooms
+    // we call the hidden "child" command we defiend in step 1
+    let mut child = Command::new("/proc/self/exe")
+        .arg("child")
+        .arg(cmd)
+        .args(args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+
+
+    child.wait()?; // if a child prints "I am inside...", we know the process cloning worked
+    
+    // cleanup
+    clean_cgroups()?;
+
+    Ok(())
+}
+```
+Breakdown:
+    1. Error Handling: `unwrap()` vs `?`
+        * Old: If `unshare` fails (e.g. forgetting `sudo`), the program **Panics**
+            * It prints a scary error message and instantly creashes
+            * The cleanup code (deleting cgroups) never runs
+        * New: Uses `?` and returns `Result<()>`
+            * If `unshare` fails, the error is passed up to `main()`
+            * This allows us to handle it gracefully
+            * You never crash on purpose, but rather propogate errors so you can log them or clean up resources before exiting
+    2. Resource Lifecycle
+        * We wrapped the chold process in a "Setup" and "Teardown" sandwich
+        * Setup using `setup_cgroups` -> we do this **before** the child starts
+            * Why? If we start the child first, it might run away and spawn 1,000 processes before we can apply the limit
+            * We build the "cage" (Cgroup) first, then put the process inside
+        * Cleanup using `clean_cgroups` -> we do this **after** `child.wait()`
+            * Why? In Linux, Cgroups are directories in the kernel's memory (`/sys/fs/cgroup/...`)
+            * If your program fiunishes and doesn't delete that folder, it stays there forever until you reboot
+            * This is a **memory leak**, so we clean to ensure to leave the system clean
+
+#### Comparing `child()` before and after:
+**Before (Prototype)**:
+```rust
+fn child(cmd: String, args: Vec<String>) {
+    println!("Child (PID: {}): Configuring container...", getpid());
+
+    // 1. Proof: set a hostname
+    // if isolation failed, this would rename my actual laptop (bad!)
+    // since we unshared UTS, this is safe
+    sethostname("carapace-container").unwrap();
+
+    // 2. The Jail: Restrict Filesystem access to the `rootfs` folder
+    println!("Child: Entering chroot jail...");
+
+    // change root to 'rootfs' folder
+    chroot("rootfs").expect("Failed to chroot. Did you create the 'rootfs' folder?");
+
+    // security best practice: moving working dir to the new root ("/")
+    chdir("/").expect("Failed to chdir to /");
+
+    // 3. The Handover: Delete this Rust program from memory and load /bin/sh
+    let c_cmd = CString::new(cmd.clone()).unwrap();
+    let c_args: Vec<CString> = std::iter::once(cmd) // start with program name
+        .chain(args.into_iter()) // add args
+        .map(|s| CString::new(s).unwrap()) // convert everything to CString
+        .collect();
+    // point of no return: once execvp() runs, my Rust code is gone
+    execvp(&c_cmd, &c_args).unwrap();
+}
+```
+
+**After (Production Ready)**:
+```rust
+fn child(cmd: String, args: Vec<String>) -> Result<()> {
+    println!("Child (PID: {}): Entering container...", getpid());
+
+    // 1. Hostname
+    sethostname("carapace-container")?;
+
+    // 2. The Jail: Restrict Filesystem access to the `rootfs` folder
+    println!("Child: Entering chroot jail...");
+    chroot("rootfs")?; // change root to 'rootfs' folder
+    chdir("/")?;  // security best practice: moving working dir to the new root ("/")
+
+    // 3. mount /proc (added this back so `ps` works!)
+    println!("Child: Mounting /proc...");
+    mount(
+        Some("proc"),
+        "/proc",
+        Some("proc"),
+        MsFlags::empty(),
+        None::<&str>
+    )?;
+
+    // 4. execute user command
+    let c_cmd = CString::new(cmd.clone()).unwrap();
+    let c_args: Vec<CString> = std::iter::once(cmd) // start with program name
+        .chain(args.into_iter()) // add args
+        .map(|s| CString::new(s).unwrap()) // convert everything to CString
+        .collect();
+    // point of no return: once execvp() runs, my Rust code is gone
+    execvp(&c_cmd, &c_args)?;
+
+    Ok(())
+}
+```
+
+Breakdown:
+    1. In New - Deep Dive: What is **Mounting**?
+        * In Linux, "Everything is a file" - hard drive, keyboard input, list of running processes
+        * The `ps` command (and `top`, `htop`) doesn't "talk to the kernel". It simplt reads files inside the directory `/proc`
+        * If that directory is empty, `ps` thinks no processes exist
+        * **Problem**: When we did `chroot("rootfs")`, we trapped the process inside the Alpine Linux folder. Inside that folder, there is a directory called proc, but **it is empty** - just a regular folder on our hard drive
+        * **Solution (Mounting)**: We need to map the Kernel's internal memory (where it keeps track of PIDs) onto that empty folder - **Pseudo-Filesystem**
+            ```rust
+            mount(
+                Some("proc"),      // 1. Source (The Label)
+                "/proc",           // 2. Target (Where to put it)
+                Some("proc"),      // 3. Filesystem Type (The Mechanism)
+                MsFlags::empty(),  // 4. Flags (Read-Write, etc.)
+                None::<&str>       // 5. Data (Options)
+            )?;
+            ```
+
+When implemented, we have accomplished the following -> run `sudo ./target/debug/carapace run /bin/sh`:
+    * Run `ps` - You should see PIDs.
+    * Run `mount` - You should see proc on /proc type proc.
+
 
 ## Resources
 * [Introduction to containers](https://litchipi.github.io/2021/09/20/container-in-rust-part1.html)
