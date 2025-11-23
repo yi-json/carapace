@@ -9,19 +9,41 @@ A lightweight container runtime written in Rust.
 - Rust (cargo)
 
 ### Installation
-1. Clone the repository:
+1. **Clone the repository:**
     ```bash
     git clone https://github.com/yi-json/carapace.git
     cd carapace
     ```
-2. Prepare the filesystem: This downloads the minimum Alpine Linux rootfs needed for the container
+2. **Prepare the filesystem:** This downloads the minimum Alpine Linux rootfs needed for the container
     ```bash
     ./setup.sh
     ```
-3. Run a container:
+3. **Run a container:**
     ```bash
     sudo cargo run -- run /bin/sh
     ```
+4. **Explore the features:**
+   Once inside the container, try these commands to verify the isolation and resource limits.
+
+   * **Check Process Isolation (PID Namespace):**
+     ```bash
+     ps
+     # You should see PID 1 for /bin/sh.
+     ```
+
+   * **Check Filesystem Isolation (Chroot):**
+     ```bash
+     ls /
+     cat /etc/os-release
+     # You are trapped inside Alpine Linux.
+     ```
+
+   * **Test Resource Limits (Cgroups):**
+     Carapace limits the container to **5 processes**. Try to crash it by spawning 6 background jobs:
+     ```bash
+     for i in $(seq 1 6); do sleep 100 & done
+     # Result: "can't fork: Resource temporarily unavailable" (The kernel blocked you!)
+     ```
 
 
 ## Documentation
@@ -368,3 +390,5 @@ We will write a small C++ function that reads the Kernel Version (using uname) a
 
 ## Resources
 * [Introduction to containers](https://litchipi.github.io/2021/09/20/container-in-rust-part1.html)
+* [Linux Man Pages: Namespaces](https://man7.org/linux/man-pages/man7/namespaces.7.html)
+* [Linux Man Pages: Cgroups](https://man7.org/linux/man-pages/man7/cgroups.7.html)
