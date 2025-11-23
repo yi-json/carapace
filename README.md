@@ -244,24 +244,27 @@ fn run(cmd: String, args: Vec<String>) -> Result<()> {
     Ok(())
 }
 ```
-Breakdown:
-    1. Error Handling: `unwrap()` vs `?`
-        * Old: If `unshare` fails (e.g. forgetting `sudo`), the program **Panics**
-            * It prints a scary error message and instantly creashes
-            * The cleanup code (deleting cgroups) never runs
-        * New: Uses `?` and returns `Result<()>`
-            * If `unshare` fails, the error is passed up to `main()`
-            * This allows us to handle it gracefully
-            * You never crash on purpose, but rather propogate errors so you can log them or clean up resources before exiting
-    2. Resource Lifecycle
-        * We wrapped the chold process in a "Setup" and "Teardown" sandwich
-        * Setup using `setup_cgroups` -> we do this **before** the child starts
-            * Why? If we start the child first, it might run away and spawn 1,000 processes before we can apply the limit
-            * We build the "cage" (Cgroup) first, then put the process inside
-        * Cleanup using `clean_cgroups` -> we do this **after** `child.wait()`
-            * Why? In Linux, Cgroups are directories in the kernel's memory (`/sys/fs/cgroup/...`)
-            * If your program fiunishes and doesn't delete that folder, it stays there forever until you reboot
-            * This is a **memory leak**, so we clean to ensure to leave the system clean
+### Breakdown
+
+1. **Error Handling: `unwrap()` vs `?`**
+    - **Old**: If `unshare` fails (e.g., forgetting `sudo`), the program **panics**.
+        - It prints a scary error message and instantly crashes.
+        - The cleanup code (deleting cgroups) never runs.
+    - **New**: Uses `?` and returns `Result<()>`.
+        - If `unshare` fails, the error is passed up to `main()`.
+        - This allows us to handle it gracefully.
+        - You never crash on purpose — you propagate errors so you can log them or clean up resources before exiting.
+
+2. **Resource Lifecycle**
+    - We wrapped the child process in a “Setup” and “Teardown” sandwich.
+    - **Setup** using `setup_cgroups` — done **before** the child starts.
+        - Why? If we start the child first, it might run away and spawn 1,000 processes before we can apply the limit.
+        - We build the “cage” (Cgroup) first, then put the process inside.
+    - **Cleanup** using `clean_cgroups` — done **after** `child.wait()`.
+        - Why? In Linux, cgroups are directories in the kernel’s memory (`/sys/fs/cgroup/...`).
+        - If your program finishes and doesn’t delete that folder, it stays there forever until you reboot.
+        - This is a **memory leak**, so we clean it to ensure we leave the system tidy.
+
 
 #### Comparing `child()` before and after:
 **Before (Prototype)**:
@@ -330,22 +333,25 @@ fn child(cmd: String, args: Vec<String>) -> Result<()> {
 }
 ```
 
-Breakdown:
-    1. In New - Deep Dive: What is **Mounting**?
-        * In Linux, "Everything is a file" - hard drive, keyboard input, list of running processes
-        * The `ps` command (and `top`, `htop`) doesn't "talk to the kernel". It simplt reads files inside the directory `/proc`
-        * If that directory is empty, `ps` thinks no processes exist
-        * **Problem**: When we did `chroot("rootfs")`, we trapped the process inside the Alpine Linux folder. Inside that folder, there is a directory called proc, but **it is empty** - just a regular folder on our hard drive
-        * **Solution (Mounting)**: We need to map the Kernel's internal memory (where it keeps track of PIDs) onto that empty folder - **Pseudo-Filesystem**
-            ```rust
-            mount(
-                Some("proc"),      // 1. Source (The Label)
-                "/proc",           // 2. Target (Where to put it)
-                Some("proc"),      // 3. Filesystem Type (The Mechanism)
-                MsFlags::empty(),  // 4. Flags (Read-Write, etc.)
-                None::<&str>       // 5. Data (Options)
-            )?;
-            ```
+### Breakdown
+
+1. **In New – Deep Dive: What is _Mounting_?**
+    - In Linux, *“everything is a file”* — hard drive, keyboard input, list of running processes.
+    - The `ps` command (and `top`, `htop`) doesn't “talk to the kernel.” It simply reads files inside the directory `/proc`.
+    - If that directory is empty, `ps` thinks no processes exist.
+    - **Problem**: When we did `chroot("rootfs")`, we trapped the process inside the Alpine Linux folder. Inside that folder, there is a directory called `proc`, but **it is empty** — just a regular folder on our hard drive.
+    - **Solution (Mounting)**: We need to map the kernel’s internal memory (where it keeps track of PIDs) onto that empty folder — a **pseudo-filesystem**.
+
+      ```rust
+      mount(
+          Some("proc"),      // 1. Source (The Label)
+          "/proc",           // 2. Target (Where to put it)
+          Some("proc"),      // 3. Filesystem Type (The Mechanism)
+          MsFlags::empty(),  // 4. Flags (Read-Write, etc.)
+          None::<&str>       // 5. Data (Options)
+      )?;
+      ```
+
 
 When implemented, we have accomplished the following -> run `sudo ./target/debug/carapace run /bin/sh`:
     * Run `ps` - You should see PIDs.
