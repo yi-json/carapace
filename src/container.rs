@@ -1,5 +1,10 @@
 // This contains the heavy lifting: Namespaces, Mounts, and the Parent/Child process logic.
 
+// Tell Rust this function exists in a linked C++ library
+extern "C" {
+    fn inspect_system();
+}
+
 use anyhow::Result;
 use nix::sched::{unshare, CloneFlags};
 use nix::unistd::{execvp, sethostname, getpid, chroot, chdir};
@@ -11,6 +16,11 @@ use crate::cgroups; // Access the cgroups module we just made
 // --- PARENT ---
 pub fn run(cmd: String, args: Vec<String>) -> Result<()> {
     cgroups::setup()?;
+
+    // print system info using our c++ library
+    unsafe {
+        inspect_system();
+    }
 
     println!("Parent (PID: {}): Setting up isolation...", getpid());
 

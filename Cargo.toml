@@ -13,3 +13,7 @@ clap = { version = "4.4", features = ["derive"] }
 
 # Better error handling
 anyhow = "1.0"
+
+[build-dependencies]
+# compiling c++ files
+cc = "1.0"

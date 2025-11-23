@@ -351,6 +351,14 @@ When implemented, we have accomplished the following -> run `sudo ./target/debug
     * Run `ps` - You should see PIDs.
     * Run `mount` - You should see proc on /proc type proc.
 
+### Phase 4: Foreign Function Interface (FFI)
+We will write a small C++ function that reads the Kernel Version (using uname) and prints a "Container Ready" banner. We will compile this C++ code and call it from inside your Rust runtime.
+
+1. To do this, we update `Cargo.toml` to include the build dependency `cc`
+2. Create a new file `src/inspector.cpp`
+3. Write a build script `build.rs` at the root level to compile the C++ file before building Rust
+4. Call the external function inside the `run` loop
+
 
 ## Resources
 * [Introduction to containers](https://litchipi.github.io/2021/09/20/container-in-rust-part1.html)
